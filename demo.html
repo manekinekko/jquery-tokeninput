@@ -24,8 +24,37 @@
         <input type="button" value="Submit" />
         <script type="text/javascript">
         $(document).ready(function() {
-            $("#demo-input").tokenInput("http://shell.loopj.com/tokeninput/tvshows.php");
+            $("#demo-input").tokenInput("http://10.6.6.119:8090/v1/sillageapi/utilisateurs", {
+                crossDomain: false,
+                queryParam: 'filtre',
+                propertyToSearch: 'nom',
+                tokenValue: 'userid'
+            });
         });
+        </script>
+    </div>
+
+    <h2>Multiple Server-Backed Searches</h2>
+    <div>
+        <input type="text" id="demo-input-multiple-endpoints" name="blah" />
+        <input type="button" value="Submit" />
+        <script type="text/javascript">
+            $(document).ready(function() {
+                $("#demo-input-multiple-endpoints").tokenInput([{
+                    url: 'http://10.6.6.119:8090/v1/sillageapi/services',
+                    propertyToSearch: 'libelle',
+                    queryParam: 'filtre'
+                },
+                {
+                    url: 'http://10.6.6.119:8090/v1/sillageapi/utilisateurs',
+                    propertyToSearch: 'nom'
+                }], {
+                    multipleEndPoints: true,
+                    onResult: function(result){ return result; },
+                    onSend: function(){},
+                    enableCache: false
+                });
+            });
         </script>
     </div>
 

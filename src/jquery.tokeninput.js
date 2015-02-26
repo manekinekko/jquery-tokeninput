@@ -38,12 +38,12 @@
     enableHTML: false,
 
     resultsFormatter: function(item) {
-      var string = item[this.propertyToSearch];
+      var string = findResult(item, this.propertyToSearch);
       return "<li>" + (this.enableHTML ? string : _escapeHTML(string)) + "</li>";
     },
 
     tokenFormatter: function(item) {
-      var string = item[this.propertyToSearch];
+      var string = findResult(item, this.propertyToSearch);
       return "<li><p>" + (this.enableHTML ? string : _escapeHTML(string)) + "</p></li>";
     },
 
@@ -68,6 +68,9 @@
 
     // Other settings
     idPrefix: "token-input-",
+
+    // Allow multiple endpoints to be used
+    multipleEndPoints: false,
 
     // Keep track if the input is currently in disabled mode
     disabled: false
@@ -135,6 +138,21 @@
     return coerceToString(text).replace(HTML_ESCAPE_CHARS, function(match) {
       return HTML_ESCAPES[match];
     });
+  }
+
+  // Find the result according to a given property (this could be one or more properties)
+  function findResult(value, propertyToSearch){
+    if(propertyToSearch.indexOf('|') === -1){
+      return value[propertyToSearch];
+    }
+    else {
+      var res = propertyToSearch.split('|');
+      for(var index=0; index<res.length; index+=1){
+        if(value[res[index]]){
+          return value[res[index]];
+        }   
+      }
+    }
   }
 
   // Additional public (exposed) methods
@@ -215,9 +233,16 @@
                   $(input).data("settings").crossDomain = (location.href.split(/\/+/g)[1] !== url.split(/\/+/g)[1]);
               }
           }
-      } else if (typeof(url_or_data) === "object") {
-          // Set the local data to search through
-          $(input).data("settings").local_data = url_or_data;
+      } 
+      else if (typeof(url_or_data) === "object") {
+          if($(input).data("settings").multipleEndPoints === true){
+            // use multiple endpoints
+            $(input).data("settings").urls = url_or_data;
+          }
+          else {
+            // Set the local data to search through
+            $(input).data("settings").local_data = url_or_data;
+          }
       }
 
       // Build class names
@@ -871,9 +896,10 @@
       }
 
       // Populate the results dropdown with some results
-      function populateDropdown (query, results) {
+      function populateDropdown (query, results, settings) {
           // exclude current tokens if configured
           results = excludeCurrent(results);
+          settings = settings || $(input).data("settings");
 
           if(results && results.length) {
               dropdown.empty();
@@ -889,23 +915,22 @@
                   })
                   .hide();
 
-              if ($(input).data("settings").resultsLimit && results.length > $(input).data("settings").resultsLimit) {
-                  results = results.slice(0, $(input).data("settings").resultsLimit);
+              if (settings.resultsLimit && results.length > settings.resultsLimit) {
+                  results = results.slice(0, settings.resultsLimit);
               }
 
               $.each(results, function(index, value) {
-                  var this_li = $(input).data("settings").resultsFormatter(value);
-
-                  this_li = find_value_and_highlight_term(this_li ,value[$(input).data("settings").propertyToSearch], query);
+                  var this_li = settings.resultsFormatter(value);
+                  this_li = find_value_and_highlight_term(this_li, findResult(value, settings.propertyToSearch), query);
                   this_li = $(this_li).appendTo(dropdown_ul);
 
                   if(index % 2) {
-                      this_li.addClass($(input).data("settings").classes.dropdownItem);
+                      this_li.addClass(settings.classes.dropdownItem);
                   } else {
-                      this_li.addClass($(input).data("settings").classes.dropdownItem2);
+                      this_li.addClass(settings.classes.dropdownItem2);
                   }
 
-                  if(index === 0 && $(input).data("settings").autoSelectFirstResult) {
+                  if(index === 0 && settings.autoSelectFirstResult) {
                       select_dropdown_item(this_li);
                   }
 
@@ -914,14 +939,14 @@
 
               show_dropdown();
 
-              if($(input).data("settings").animateDropdown) {
+              if(settings.animateDropdown) {
                   dropdown_ul.slideDown("fast");
               } else {
                   dropdown_ul.show();
               }
           } else {
-              if($(input).data("settings").noResultsText) {
-                  dropdown.html("<p>" + escapeHTML($(input).data("settings").noResultsText) + "</p>");
+              if(settings.noResultsText) {
+                  dropdown.html("<p>" + escapeHTML(settings.noResultsText) + "</p>");
                   show_dropdown();
               }
           }
@@ -972,7 +997,7 @@
       function run_search(query) {
           var cache_key = query + computeURL();
           var cached_results = cache.get(cache_key);
-          if (cached_results) {
+          if ($(input).data("settings").enableCache && cached_results) {
               if ($.isFunction($(input).data("settings").onCachedResult)) {
                 cached_results = $(input).data("settings").onCachedResult.call(hiddenInput, cached_results);
               }
@@ -1051,13 +1076,139 @@
                   }
                   populateDropdown(query, results);
               }
+              else if($(input).data("settings").urls){
+                // Are we doing an ajax search on multiple endpoints?
+                handleMultipleEndPoints(query, cache_key);
+              }
+
           }
       }
 
       // compute the dynamic URL
       function computeURL() {
-          var settings = $(input).data("settings");
-          return typeof settings.url == 'function' ? settings.url.call(settings) : settings.url;
+        var res = '';
+        var settings = $(input).data("settings");
+        if(typeof settings.url === 'function') {
+          res = settings.url.call(settings);
+        }
+        else if(typeof settings.url === 'string') {
+          res = settings.url;
+        }
+        else if(typeof settings.urls !== 'undefined') {
+          res = $.map(settings.urls, function(endpoint){
+            return endpoint.url;
+          }).join('+');
+        }
+        return res;
+      }
+
+      function handleMultipleEndPoints(query, cache_key){
+
+        var requests = [];
+        var results = [];
+        var cached_setting = $(input).data("settings");
+        var urls = cached_setting.urls;
+
+        $.each(urls, function(index, setting){
+          setting = $.extend(cached_setting, setting);
+          var url = setting.url;
+
+          // Extract existing get params
+          var ajax_params = {};
+          ajax_params.data = {};
+          if(url.indexOf("?") > -1) {
+              var parts = url.split("?");
+              ajax_params.url = parts[0];
+
+              var param_array = parts[1].split("&");
+              $.each(param_array, function (index, value) {
+                  var kv = value.split("=");
+                  ajax_params.data[kv[0]] = kv[1];
+              });
+          } else {
+              ajax_params.url = url;
+          }
+
+          // Prepare the request
+          ajax_params.data[setting.queryParam] = query;
+          ajax_params.type = setting.method;
+          ajax_params.dataType = setting.contentType;
+          if (setting.crossDomain) {
+              ajax_params.dataType = "jsonp";
+          }
+
+          // exclude current tokens?
+          // send exclude list to the server, so it can also exclude existing tokens
+          if (setting.excludeCurrent) {
+              var currentTokens = $(input).data("tokenInputObject").getTokens();
+              var tokenList = $.map(currentTokens, function (el) {
+                  if(typeof setting.tokenValue == 'function')
+                      return setting.tokenValue.call(this, el);
+
+                  return el[setting.tokenValue];
+              });
+
+              ajax_params.data[setting.excludeCurrentParameter] = tokenList.join(setting.tokenDelimiter);
+          }
+
+          // Provide a beforeSend callback
+          if (cached_setting.onSend) {
+            cached_setting.onSend(ajax_params);
+          }
+
+          // Make the request
+          requests.push($.ajax(ajax_params));
+        });
+        
+        $.when.apply($, requests).then(function() {
+          results = $.map(arguments, function(arr, index){
+            return arr[0];
+          });
+
+          $.each(urls, function(index, setting){
+            if($.isFunction(cached_setting.onResult)) {
+              results = cached_setting.onResult.call(hiddenInput, results);
+            }
+          });
+
+          // only populate the dropdown if the results are associated with the active search query
+          if(input_box.val() === query) {
+            
+            // merge the settings objects in order to send them to "populateDropdown" function
+            // ex:
+            // objectA = {propertyToSearch: 'search_1'}
+            // ObjectB = {propertyToSearch: 'search_2'}
+            // ==> objectA = {propertyToSearch: ['search_1', 'search_2']}
+            $.each(urls, function(index, setting){
+
+              for(var key in setting){
+                if(setting.hasOwnProperty(key)){
+                  if(cached_setting[key]){
+                    
+                    // concatenate all the properties (unique)
+                    if(key !== 'url' &&  typeof cached_setting[key] === 'string' && cached_setting[key].indexOf(setting[key]) === -1){
+                      cached_setting[key] += '|'+setting[key]; // make sure it's a valid regexp
+                    }
+                    else {
+                      // @todo handle non-string values
+                    }
+
+                  }
+                  else {
+                    // if not, create an empty string
+                    cached_setting[key] = '';
+                  }
+                }
+              }
+
+            });
+            cached_setting.url = null;
+            populateDropdown(query, results, cached_setting);
+            cache.add(cache_key, results);
+          }
+
+        });
+      
       }
 
       // Bring browser focus to the specified object.
