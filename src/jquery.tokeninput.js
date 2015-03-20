@@ -1106,7 +1106,7 @@
 
         var requests = [];
         var results = [];
-        var cached_setting = $(input).data("settings");
+        var cached_setting = $.extend(true, {}, $(input).data("settings"));
         var urls = cached_setting.urls;
 
         $.each(urls, function(index, setting){
